@@ -206,3 +206,12 @@ footer a:hover { color: var(--acc); }
   padding: 10px 16px; border-radius: 3px; box-shadow: 4px 4px 0 var(--acc); max-width: calc(100% - 32px);
 }
 .kv dd .chip, h2 .chip, .title .chip { margin-left: 6px; }
+
+/* sign in with fourtexec */
+.consent .profile-head h1 { font-size: 28px; }
+.signed-as { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; padding: 12px 0; margin: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.scope-list { list-style: none; padding: 0; margin: 0 0 16px; }
+.scope-list li { padding: 6px 0 6px 26px; position: relative; font-size: 15px; }
+.scope-list li::before { content: "✓"; position: absolute; left: 4px; color: var(--ok); font-family: var(--mono); }
+.app-row { display: flex; gap: 12px; align-items: flex-start; }
+.app-row .avatar.s { border-radius: 4px; margin-top: 2px; }

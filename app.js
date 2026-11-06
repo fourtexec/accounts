@@ -282,6 +282,7 @@ var SIDE = [
   { to: "/", label: "overview" },
   { to: "/profile", label: "profile" },
   { to: "/security", label: "security" },
+  { to: "/apps", label: "apps" },
   { to: "/account", label: "account" }
 ];
 
@@ -726,12 +727,16 @@ var ACTIONS = {
   "admin.session_revoked": "device signed out by staff",
   "admin.2fa_disabled": "2fa turned off by staff",
   "admin.password_reset_sent": "staff sent a password reset",
-  "admin.verification_sent": "staff resent confirmation email"
+  "admin.verification_sent": "staff resent confirmation email",
+  "oauth.authorized": "signed in to an app",
+  "oauth.denied": "declined an app",
+  "oauth.access_revoked": "disconnected an app"
 };
 
 function describeAction(item, myId) {
   var label = ACTIONS[item.action] || item.action;
   if (item.action === "admin.role_changed" && item.meta) label += " (" + item.meta.from + " → " + item.meta.to + ")";
+  if (item.action.indexOf("oauth.") === 0 && item.target) label += ": " + item.target.label;
   if (item.actor && item.actor.id !== myId && item.action.indexOf("admin.") === 0) label += " · " + item.actor.username;
   return label;
 }
@@ -789,6 +794,127 @@ function bindAccount() {
   });
 }
 
+/* ================================================================
+   sign in with fourtexec (oauth consent) & connected apps
+   ================================================================ */
+
+function appLogo(app, size) {
+  var letter = esc((app.name || "?").trim().charAt(0).toUpperCase());
+  var img = app.logoUrl ? '<img src="' + esc(app.logoUrl) + '" alt="" referrerpolicy="no-referrer" data-hide-on-error>' : "";
+  return '<span class="avatar ' + size + '">' + letter + img + "</span>";
+}
+
+var OAUTH_ERRORS = {
+  invalid_client: "this app isn't registered with fourtexec, or it has been switched off.",
+  invalid_redirect_uri: "the app tried to send you to an address it never registered. that can be a sign of phishing, so we stopped here."
+};
+
+function authorizePage() {
+  var err = state.query.get("error");
+  if (err) {
+    return '<div class="wrap auth-box"><p class="kicker">$ oauth --authorize</p><h1 class="page-title">can\'t sign you in</h1>' +
+      '<div class="alert error">' + esc(OAUTH_ERRORS[err] || state.query.get("error_description") || err) + "</div>" +
+      '<p class="page-sub small">go back to the app and try again. if it keeps happening, tell the app\'s developers.</p>' +
+      '<a class="btn" href="#/">→ my account</a></div>';
+  }
+  return '<div class="wrap auth-box"><p class="kicker">$ oauth --authorize</p><div id="consent" class="spinner">loading</div></div>';
+}
+
+function bindAuthorize() {
+  var id = state.query.get("request");
+  var box = $("#consent");
+  if (!box) return;
+  if (!id) { box.className = "alert error"; box.textContent = "this link is broken — go back to the app and try again."; return; }
+
+  function decide(approve) {
+    return api("POST", "/v1/oauth/requests/" + encodeURIComponent(id), { approve: approve }).then(function (res) {
+      box.className = "spinner";
+      box.innerHTML = approve ? "signing you in" : "going back";
+      location.href = res.redirectTo;
+    });
+  }
+
+  api("GET", "/v1/oauth/requests/" + encodeURIComponent(id)).then(function (info) {
+    var app = info.client;
+    if (info.alreadyGranted || app.trusted) {
+      box.textContent = "signing you in to " + app.name;
+      return decide(true);
+    }
+    var me = state.me;
+    box.className = "";
+    box.innerHTML = '<div class="card consent">' +
+      '<div class="profile-head">' + appLogo(app, "m") + "<div><h1>" + esc(app.name) + "</h1>" +
+        '<div class="handle">wants to use your fourtexec account</div></div></div>' +
+      (app.description ? '<p class="bio">' + esc(app.description) + "</p>" : "") +
+      '<div class="signed-as">' + avatar(me, "s") + "<span>signed in as <b>@" + esc(me.username) + '</b></span> <a class="link small" href="#" id="switch-user">not you?</a></div>' +
+      '<p class="kicker">this will let ' + esc(app.name) + ":</p>" +
+      '<ul class="scope-list">' + info.scopes.map(function (s) { return "<li>" + esc(s.description) + "</li>"; }).join("") + "</ul>" +
+      '<p class="small mut">after you allow, you go to <b class="mono">' + esc(info.redirectHost) + "</b>" +
+        (app.homepageUrl ? ' · <a class="link" href="' + esc(app.homepageUrl) + '" target="_blank" rel="noreferrer">about the app</a>' : "") +
+        ". you can disconnect it any time in <b>~/ apps</b>.</p>" +
+      '<div class="btn-row"><button class="btn btn-solid" id="allow">allow</button><button class="btn" id="deny">cancel</button></div>' +
+    "</div>";
+    hookImages(box);
+    var allow = $("#allow"), deny = $("#deny");
+    [allow, deny].forEach(function (b) {
+      b.addEventListener("click", function () {
+        allow.disabled = deny.disabled = true;
+        decide(b === allow).catch(function (err) { toast(err.message); allow.disabled = deny.disabled = false; });
+      });
+    });
+    $("#switch-user").addEventListener("click", function (e) {
+      e.preventDefault();
+      var back = location.href;
+      api("POST", "/v1/auth/logout").catch(function () {}).then(function () {
+        state.me = null;
+        location.hash = "/login?next=" + encodeURIComponent(back);
+      });
+    });
+  }, function (err) {
+    box.className = "alert error";
+    box.textContent = err.message;
+  });
+}
+
+function appsPage() {
+  return shell("/apps",
+    '<h1 class="page-title">apps</h1><p class="page-sub">apps you signed in to with your fourtexec account.</p>' +
+    '<div class="card" id="apps-card"><div class="spinner">loading</div></div>');
+}
+
+function bindApps() {
+  var card = $("#apps-card");
+  api("GET", "/v1/me/apps").then(function (res) {
+    if (!res.items.length) {
+      card.innerHTML = '<p class="mut">nothing connected yet. when an app offers “sign in with fourtexec”, it shows up here.</p>';
+      return;
+    }
+    card.innerHTML = '<ul class="rows">' + res.items.map(function (a) {
+      return '<li><div class="main app-row">' + appLogo(a, "s") + "<div>" +
+        '<div class="title">' + (a.homepageUrl ? '<a class="link" href="' + esc(a.homepageUrl) + '" target="_blank" rel="noreferrer">' + esc(a.name) + "</a>" : esc(a.name)) +
+          (a.disabled ? ' <span class="chip">switched off</span>' : "") + "</div>" +
+        '<div class="meta">can ' + esc(a.scopes.map(scopeShort).join(", ")) + "</div>" +
+        '<div class="meta">connected ' + esc(fmtDate(a.grantedAt)) + " · last used " + esc(ago(a.lastUsedAt)) + "</div></div></div>" +
+        '<button class="btn btn-sm btn-danger" data-disconnect="' + esc(a.clientId) + '" data-name="' + esc(a.name) + '">disconnect</button></li>';
+    }).join("") + "</ul>";
+    hookImages(card);
+    $$("[data-disconnect]", card).forEach(function (b) {
+      b.addEventListener("click", function () {
+        if (!confirm("disconnect " + b.getAttribute("data-name") + "? it gets signed out and has to ask again next time.")) return;
+        b.disabled = true;
+        api("DELETE", "/v1/me/apps/" + encodeURIComponent(b.getAttribute("data-disconnect"))).then(function () {
+          toast("disconnected");
+          bindApps();
+        }, function (err) { toast(err.message); b.disabled = false; });
+      });
+    });
+  }, function (err) { card.innerHTML = '<div class="alert error">' + esc(err.message) + "</div>"; });
+}
+
+function scopeShort(s) {
+  return { openid: "sign you in", profile: "see your profile", email: "see your email", offline_access: "stay signed in" }[s] || s;
+}
+
 function publicProfilePage(username) {
   return '<div class="wrap"><div id="pub" class="spinner">loading</div></div>';
 }
@@ -829,7 +955,10 @@ var ROUTES = {
   "/": { page: overviewPage, bind: bindOverview, auth: true },
   "/profile": { page: profilePage, bind: bindProfile, auth: true },
   "/security": { page: securityPage, bind: bindSecurity, auth: true },
-  "/account": { page: accountPage, bind: bindAccount, auth: true }
+  "/account": { page: accountPage, bind: bindAccount, auth: true },
+  "/apps": { page: appsPage, bind: bindApps, auth: true },
+  // auth only when there is a request to approve; error links work signed out
+  "/authorize": { page: authorizePage, bind: bindAuthorize, auth: function () { return !state.query.get("error"); } }
 };
 
 function parseHash() {
@@ -859,7 +988,7 @@ function render() {
     bindPublicProfile(pub[1]);
   } else if (!r) {
     app.innerHTML = notFoundPage();
-  } else if (r.auth && !state.me) {
+  } else if ((typeof r.auth === "function" ? r.auth() : r.auth) && !state.me) {
     location.replace("#/login?next=" + encodeURIComponent(location.href));
     return;
   } else if (r.guest && state.me) {
@@ -883,6 +1012,12 @@ function route() {
 }
 
 function boot() {
+  // refuse to run inside a frame: a hidden "allow" button is a classic trick
+  if (window.top !== window.self) {
+    document.body.innerHTML = "";
+    try { window.top.location = window.location.href; } catch (e) {}
+    return;
+  }
   renderFooter();
   Promise.all([
     api("GET", "/v1/me").then(function (r) { return r.user; }, function (err) {

@@ -1,11 +1,12 @@
 # fourtexec accounts
 
-Сайт аккаунта: **accounts.fourtexec.site**. Вход, регистрация, сброс пароля, подтверждение почты, профиль, 2FA (с QR-кодом и recovery-кодами), список устройств, история входов, удаление аккаунта, публичные профили `#/u/<username>`.
+Сайт аккаунта: **accounts.fourtexec.site**. Вход, регистрация, сброс пароля, подтверждение почты, профиль, 2FA (с QR-кодом и recovery-кодами), список устройств, история входов, удаление аккаунта, публичные профили `#/u/<username>`, экран согласия «Sign in with fourtexec» (`#/authorize`) и список подключённых приложений (`#/apps`).
 
 Статический сайт без сборки: `index.html` + `app.js` + `style.css`. Работает с API из [fourtexec/api](https://github.com/fourtexec/api) — там же описание всей архитектуры.
 
 - Адреса API и соседних сайтов — в `config.js` (на `localhost` подставляются локальные порты).
 - После входа возвращает туда, откуда пришли: `#/login?next=https://fourtexec.site/...` (только на `*.fourtexec.site`).
+- Страница не работает внутри `<iframe>` — защита экрана согласия от кликджекинга.
 - Строгий Content-Security-Policy в `index.html`. Если поменяете inline-скрипт темы — пересчитайте его sha256 в CSP.
 - `vendor/qrcode.js` — [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT) для QR-кода 2FA.
 
